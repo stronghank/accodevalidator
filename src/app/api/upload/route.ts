@@ -101,19 +101,30 @@ export async function POST(req: NextRequest) {
 
     await pool.connect();
 
+    // Track unique CODE_COMBINATION_ID values
+    const uniqueCodes = new Set<string>();
+
     for (let i = 0; i < parsedResults.length; i += batchSize) {
       const batch = parsedResults.slice(i, i + batchSize);
       const request = pool.request();
 
-      batch.forEach((row, index) => {
-        // Use unique parameter names by adding the index
-        request.input(`code${index}`, row.CODE_COMBINATION_ID); // Unique parameter name
-      });
-
-      await request.query(
-        `INSERT INTO accode (code) 
-        VALUES (@code0)` // Adjust as needed
-      );
+      for (const row of batch) {
+        // Check for duplicates
+        if (!uniqueCodes.has(row.CODE_COMBINATION_ID)) {
+          uniqueCodes.add(row.CODE_COMBINATION_ID);
+          
+          // Use a unique parameter name for each insertion
+          const paramName = `code_${row.CODE_COMBINATION_ID}`; // Create a unique parameter name
+          request.input(paramName, row.CODE_COMBINATION_ID); // Unique parameter name
+          
+          await request.query(
+            `INSERT INTO accode (code) 
+            VALUES (@${paramName})` // Use the unique parameter name
+          );
+        } else {
+          console.log(`Duplicate CODE_COMBINATION_ID found: ${row.CODE_COMBINATION_ID}`);
+        }
+      }
     }
 
     await pool.close();
