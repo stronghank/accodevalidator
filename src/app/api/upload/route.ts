@@ -112,14 +112,13 @@ export async function POST(req: NextRequest) {
         // Check for duplicates
         if (!uniqueCodes.has(row.CODE_COMBINATION_ID)) {
           uniqueCodes.add(row.CODE_COMBINATION_ID);
-          
           // Use a unique parameter name for each insertion
-          const paramName = `code_${row.CODE_COMBINATION_ID}`; // Create a unique parameter name
-          request.input(paramName, row.CODE_COMBINATION_ID); // Unique parameter name
-          
+          //const paramName = `code_${row.CODE_COMBINATION_ID}`; // Create a unique parameter name
+          //console.log(paramName);
+          //request.input(paramName, row.CODE_COMBINATION_ID); // Unique parameter name
           await request.query(
             `INSERT INTO accode (code) 
-            VALUES (@${paramName})` // Use the unique parameter name
+            VALUES ('${row.CODE_COMBINATION_ID}')` // Use the unique parameter name
           );
         } else {
           console.log(`Duplicate CODE_COMBINATION_ID found: ${row.CODE_COMBINATION_ID}`);
