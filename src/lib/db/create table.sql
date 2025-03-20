@@ -1,0 +1,6 @@
+CREATE TABLE accode(
+    id INT IDENTITY(1,1) PRIMARY KEY, 
+    code VARCHAR(50)
+);
+
+ALTER TABLE accode ADD CONSTRAINT UQ_code UNIQUE (code);

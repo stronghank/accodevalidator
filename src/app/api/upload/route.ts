@@ -1,9 +1,7 @@
-import { NextResponse } from 'next/server';
-import multer from 'multer';
+import { NextResponse, NextRequest } from 'next/server';
 import csv from 'csv-parser';
 import { ConnectionPool } from 'mssql';
-
-const upload = multer({ storage: multer.memoryStorage() });
+import streamifier from 'streamifier';
 
 const config = {
   user: process.env.DB_USER,
@@ -11,55 +9,117 @@ const config = {
   server: process.env.DB_SERVER,
   database: process.env.DB_DATABASE,
   options: {
-    encrypt: process.env.DB_ENCRYPT === 'true', // Use this if you're on Azure
-    trustServerCertificate: process.env.DB_TRUST_SERVER_CERTIFICATE === 'true', // Change to true for local dev / self-signed certs
+    encrypt: false,
+    trustServerCertificate: true,
   },
 };
 
-// This API route handles the file upload
-export async function POST(req: Request) {
-  const formData = await req.formData();
-  const file = formData.get('file') as File;
+// Define the type for CSV row
+interface CsvRow {
+  CODE_COMBINATION_ID: string;
+  SEGMENT1: string;
+  SEGMENT2: string;
+  SEGMENT3: string;
+  SEGMENT4: string;
+  SEGMENT5: string;
+  SEGMENT6: string;
+  // Add other fields as necessary
+}
 
-  if (!file) {
+// This API route handles the file upload
+export async function POST(req: NextRequest) {
+  const contentType = req.headers.get('content-type');
+
+  if (!contentType || !contentType.startsWith('multipart/form-data')) {
+    return NextResponse.json({ error: 'Invalid content type' }, { status: 400 });
+  }
+
+  const formData = await req.formData();
+  const file = formData.get('file');
+
+  // Ensure file is an instance of File
+  if (!(file instanceof File)) {
     return NextResponse.json({ error: 'File is required' }, { status: 400 });
   }
 
-  const results: any[] = [];
-  const batchSize = 1000; // Adjust batch size as needed
+  const batchSize = 100; // Adjust batch size as needed
 
   // Parse the CSV file
   const buffer = await file.arrayBuffer();
   const csvData = Buffer.from(buffer).toString();
 
-  csvData
-    .pipe(csv())
-    .on('data', (data) => results.push(data))
-    .on('end', async () => {
-      try {
-        const pool = await new ConnectionPool(config).connect();
+  const parseCSV = (): Promise<CsvRow[]> => {
+    return new Promise((resolve, reject) => {
+      const results: CsvRow[] = []; // Specify type for results
+      streamifier.createReadStream(csvData)
+        .pipe(csv())
+        .on('headers', (headers: string[]) => {
+          // Trim the headers
+          const trimmedHeaders = headers.map(header => header.trim());
+          return trimmedHeaders; // Return trimmed headers
+        })
+        .on('data', (data: CsvRow) => {
+          // Trim all fields in the data object
+          const trimmedData = Object.fromEntries(
+            Object.entries(data).map(([key, value]) => [key.trim(), value.trim()])
+          ) as CsvRow; // Cast to CsvRow type
 
-        for (let i = 0; i < results.length; i += batchSize) {
-          const batch = results.slice(i, i + batchSize);
-          const request = pool.request();
+          // Concatenate segments into the code column
+          const code = [
+            trimmedData.SEGMENT1,
+            trimmedData.SEGMENT2,
+            trimmedData.SEGMENT3,
+            trimmedData.SEGMENT4,
+            trimmedData.SEGMENT5,
+            trimmedData.SEGMENT6,
+          ].join('.');
 
-          batch.forEach((row) => {
-            request.input('column1', row.column1); // Adjust according to your CSV structure
-            request.input('column2', row.column2);
-            // Add more inputs as needed
-            request.query('INSERT INTO your_table (column1, column2) VALUES (@column1, @column2)'); // Adjust as needed
-          });
+          // Push the modified data with all required fields
+          results.push({ ...trimmedData, CODE_COMBINATION_ID: code });
+        })
+        .on('end', () => resolve(results))
+        .on('error', (error) => reject(error));
+    });
+  };
 
-          await request.execute('yourStoredProcedure'); // Or use request.query() for raw SQL
-        }
+  try {
+    // Ensure database config values are defined
+    const { user, password, server, database } = config;
 
-        await pool.close();
-        return NextResponse.json({ message: 'File processed successfully' });
-      } catch (error) {
-        console.error(error);
-        return NextResponse.json({ error: 'Database insertion failed' }, { status: 500 });
-      }
+    if (!user || !password || !server || !database) {
+      return NextResponse.json({ error: 'Database configuration is incomplete' }, { status: 500 });
+    }
+
+    const parsedResults = await parseCSV();
+    const pool = new ConnectionPool({
+      user,
+      password,
+      server,
+      database,
+      options: config.options,
     });
 
-  return new Promise(() => {}); // Keep the promise alive until the CSV processing is done
+    await pool.connect();
+
+    for (let i = 0; i < parsedResults.length; i += batchSize) {
+      const batch = parsedResults.slice(i, i + batchSize);
+      const request = pool.request();
+
+      batch.forEach((row, index) => {
+        // Use unique parameter names by adding the index
+        request.input(`code${index}`, row.CODE_COMBINATION_ID); // Unique parameter name
+      });
+
+      await request.query(
+        `INSERT INTO accode (code) 
+        VALUES (@code0)` // Adjust as needed
+      );
+    }
+
+    await pool.close();
+    return NextResponse.json({ message: 'File processed successfully' });
+  } catch (error) {
+    console.error(error);
+    return NextResponse.json({ error: 'Database insertion failed' }, { status: 500 });
+  }
 }
