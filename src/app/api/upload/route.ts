@@ -121,7 +121,7 @@ export async function POST(req: NextRequest) {
             VALUES ('${row.CODE_COMBINATION_ID}')` // Use the unique parameter name
           );
         } else {
-          console.log(`Duplicate CODE_COMBINATION_ID found: ${row.CODE_COMBINATION_ID}`);
+          //console.log(`Duplicate CODE_COMBINATION_ID found: ${row.CODE_COMBINATION_ID}`);
         }
       }
     }

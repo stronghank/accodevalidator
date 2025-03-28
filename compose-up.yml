@@ -1,0 +1,11 @@
+services:
+  accodevalidator::
+    build:
+      context: .
+      dockerfile: dockerfile
+    image: accodevalidator-docker:latest # Define the custom image name
+    ports:
+      - "3000:3000" # Map host port 3009 to container port 3000
+    env_file:
+      - .env.local
+    restart: always
